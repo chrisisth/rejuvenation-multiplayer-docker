@@ -22,8 +22,16 @@ plus co-op sync battles, PvP and trading.
 | Trading (pick a partner, two-sided confirm, dupe protection) | ✅ |
 | Multiplayer menu in the pause menu (PvP & Trading) | ✅ |
 | Internet play over [ZeroTier](https://www.zerotier.com/) | ✅ |
+| **Pre-game menu** (launcher) — set the rules of your run | ✅ |
+| ↳ Difficulty scaling for co-op battles (Light / Normal / Hard / Very Hard) | ✅ |
+| ↳ Randomizer (wild + trainers, fixed per-seed mapping, seed bound to your save) | ✅ |
+| ↳ Soul Link (catch-order linking, linked faint, permanent death) | ✅ |
 
 **Deliberately out of scope:** shared story flags, synchronized cutscenes, anti-cheat.
+
+The pre-game options are **host-authoritative**: the host sets them in the launcher and
+the joiner inherits them automatically. The randomizer seed is locked to each save the
+first time it applies, so a run's world never silently changes.
 
 ---
 

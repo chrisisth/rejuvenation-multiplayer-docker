@@ -31,3 +31,7 @@ server/testclient.js
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Relay-Laufzeit-Log
+server/relay.out
+*.out

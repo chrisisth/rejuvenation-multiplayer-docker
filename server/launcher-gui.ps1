@@ -1,5 +1,5 @@
-# Rejuvenation Co-op -- Nativer Launcher (WinForms).
-# Start am besten ueber start-launcher.bat (versteckt das Konsolenfenster).
+# Rejuvenation Co-op -- native launcher (WinForms).
+# Best started via start-launcher.bat (hides the console window).
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -12,7 +12,7 @@ $RelayJs      = Join-Path $ServerDir "relay.js"
 $RelayPort    = 7777
 $ZtExe        = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
 
-# --- Hilfsfunktionen ---------------------------------------------------------
+# --- Helpers -----------------------------------------------------------------
 
 function Load-Settings {
   try { return (Get-Content -Raw $SettingsFile | ConvertFrom-Json) } catch { return New-Object PSObject }
@@ -39,12 +39,12 @@ function New-RandomToken {
 }
 
 function Get-ZtStatus {
-  # Liefert @{ ok=bool; text=string; ip=string; nwid=string }
-  $r = @{ ok = $false; text = "ZeroTier nicht installiert (winget install ZeroTier.ZeroTierOne)"; ip = ""; nwid = "" }
+  # Returns @{ ok=bool; text=string; ip=string; nwid=string }
+  $r = @{ ok = $false; text = "ZeroTier not installed (winget install ZeroTier.ZeroTierOne)"; ip = ""; nwid = "" }
   if (-not (Test-Path $ZtExe)) { return $r }
   try {
     $info = (& $ZtExe -q info 2>$null)
-    if (-not $info) { $r.text = "ZeroTier-Dienst antwortet nicht"; return $r }
+    if (-not $info) { $r.text = "ZeroTier service not responding"; return $r }
     $online = ($info -match "ONLINE")
     $lines = (& $ZtExe -q listnetworks 2>$null) -split "`n"
     $netLines = @()
@@ -58,19 +58,19 @@ function Get-ZtStatus {
         if ($status -eq "OK" -and $ips -ne "-") {
           $ip = ($ips -split ",")[0] -replace "/\d+$", ""
           $r.ok = $true; $r.ip = $ip; $r.nwid = $nwid
-          $netLines += "Netz $nwid  OK  IP: $ip"
+          $netLines += "Network $nwid  OK  IP: $ip"
         } elseif ($status -eq "REQUESTING_CONFIGURATION" -or $status -eq "ACCESS_DENIED") {
-          $netLines += "Netz $nwid  wartet auf Freigabe durch den Host!"
+          $netLines += "Network $nwid  waiting for host authorization!"
         } else {
-          $netLines += "Netz $nwid  Status: $status"
+          $netLines += "Network $nwid  Status: $status"
         }
       }
     }
-    if ($netLines.Count -eq 0) { $netLines += "In keinem Netzwerk (Host-Netz-ID im Beitreten-Feld eintragen)" }
+    if ($netLines.Count -eq 0) { $netLines += "Not in any network (enter the host's Network ID in the Join field)" }
     $stateStr = "OFFLINE"; if ($online) { $stateStr = "ONLINE" }
     $r.text = "ZeroTier " + $stateStr + "`n" + ($netLines -join "`n")
     return $r
-  } catch { $r.text = "ZeroTier-Fehler: $($_.Exception.Message)"; return $r }
+  } catch { $r.text = "ZeroTier error: $($_.Exception.Message)"; return $r }
 }
 
 function Test-RelayPort {
@@ -96,12 +96,12 @@ function Find-GameExe {
 }
 
 function Write-CoopConfig([string]$gameDir, [string]$server, [string]$token) {
-  $lines = @("# vom Launcher geschrieben", "server = $server")
+  $lines = @("# written by the launcher", "server = $server")
   if ($token) { $lines += "token  = $token" }
   ($lines -join "`n") + "`n" | Set-Content -Encoding ascii (Join-Path $gameDir "coop_config.txt")
 }
 
-# --- Pre-Game-Optionen -------------------------------------------------------
+# --- Pre-game options --------------------------------------------------------
 function Get-OptOr([string]$name, [string]$default) {
   $v = Get-Setting $name
   if ([string]::IsNullOrWhiteSpace($v)) { return $default }
@@ -115,7 +115,7 @@ function Write-CoopOptions([string]$gameDir, [string]$role = "host") {
   $seed = Get-OptOr "optRandSeed"    "0"
   $diff = Get-OptOr "optDifficulty"  "normal"
   $lines = @(
-    "# vom Launcher geschrieben (Pre-Game-Optionen)",
+    "# written by the launcher (pre-game options)",
     "role            = $role",
     "soul_link       = $sl",
     "rand_wild       = $rw",
@@ -129,7 +129,7 @@ function Write-CoopOptions([string]$gameDir, [string]$role = "host") {
 
 function Show-PreGameOptions {
   $dlg = New-Object Windows.Forms.Form
-  $dlg.Text = "Pre-Game Optionen"
+  $dlg.Text = "Pre-Game Options"
   $dlg.ClientSize = New-Object Drawing.Size(372, 316)
   $dlg.StartPosition = "CenterParent"
   $dlg.FormBorderStyle = "FixedDialog"; $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
@@ -138,43 +138,43 @@ function Show-PreGameOptions {
   $dlg.Font = New-Object Drawing.Font("Segoe UI", 9.5)
 
   $info = New-Object Windows.Forms.Label
-  $info.Text = "Beeinflusst das Spiel. Gilt fuer beide Spieler (Host stellt ein)."
+  $info.Text = "Affects the game. Applies to both players (the host decides)."
   $info.Location = New-Object Drawing.Point(16, 12); $info.Size = New-Object Drawing.Size(330, 32)
   $info.ForeColor = [Drawing.Color]::FromArgb(150, 156, 174)
   $dlg.Controls.Add($info)
 
   $cbSoul = New-Object Windows.Forms.CheckBox
-  $cbSoul.Text = "Soul Link  (verkettete Ohnmacht der Teams)"
+  $cbSoul.Text = "Soul Link  (linked faint across both teams)"
   $cbSoul.Location = New-Object Drawing.Point(16, 52); $cbSoul.Size = New-Object Drawing.Size(330, 24)
   $cbSoul.Checked = ((Get-OptOr "optSoulLink" "off") -eq "on")
   $dlg.Controls.Add($cbSoul)
 
   $lblRand = New-Object Windows.Forms.Label
-  $lblRand.Text = "Randomizer (komplett zufaellig, gleicher Seed):"
+  $lblRand.Text = "Randomizer (fully random, same seed):"
   $lblRand.Location = New-Object Drawing.Point(16, 82); $lblRand.Size = New-Object Drawing.Size(344, 20)
   $lblRand.ForeColor = [Drawing.Color]::FromArgb(150, 156, 174)
   $dlg.Controls.Add($lblRand)
 
   $cbRandWild = New-Object Windows.Forms.CheckBox
-  $cbRandWild.Text = "Wild-Pokemon"
+  $cbRandWild.Text = "Wild Pokemon"
   $cbRandWild.Location = New-Object Drawing.Point(32, 104); $cbRandWild.Size = New-Object Drawing.Size(320, 22)
   $cbRandWild.Checked = ((Get-OptOr "optRandWild" "off") -eq "on")
   $dlg.Controls.Add($cbRandWild)
 
   $cbRandTrainer = New-Object Windows.Forms.CheckBox
-  $cbRandTrainer.Text = "Trainer-Teams"
+  $cbRandTrainer.Text = "Trainer teams"
   $cbRandTrainer.Location = New-Object Drawing.Point(32, 128); $cbRandTrainer.Size = New-Object Drawing.Size(320, 22)
   $cbRandTrainer.Checked = ((Get-OptOr "optRandTrainer" "off") -eq "on")
   $dlg.Controls.Add($cbRandTrainer)
 
   $cbRandStatic = New-Object Windows.Forms.CheckBox
-  $cbRandStatic.Text = "Geschenk / Statisch"
+  $cbRandStatic.Text = "Gift / Static"
   $cbRandStatic.Location = New-Object Drawing.Point(32, 152); $cbRandStatic.Size = New-Object Drawing.Size(320, 22)
   $cbRandStatic.Checked = ((Get-OptOr "optRandStatic" "off") -eq "on")
   $dlg.Controls.Add($cbRandStatic)
 
   $lblSeed = New-Object Windows.Forms.Label
-  $lblSeed.Text = "Seed (leer = zufaellig):"
+  $lblSeed.Text = "Seed (empty = random):"
   $lblSeed.Location = New-Object Drawing.Point(32, 180); $lblSeed.Size = New-Object Drawing.Size(140, 22)
   $dlg.Controls.Add($lblSeed)
   $txtSeed = New-Object Windows.Forms.TextBox
@@ -184,7 +184,7 @@ function Show-PreGameOptions {
   $dlg.Controls.Add($txtSeed)
 
   $lblDiff = New-Object Windows.Forms.Label
-  $lblDiff.Text = "Schwierigkeit (MP):"
+  $lblDiff.Text = "Difficulty (co-op):"
   $lblDiff.Location = New-Object Drawing.Point(16, 212); $lblDiff.Size = New-Object Drawing.Size(150, 22)
   $dlg.Controls.Add($lblDiff)
   $cmbDiff = New-Object Windows.Forms.ComboBox
@@ -197,11 +197,11 @@ function Show-PreGameOptions {
   $dlg.Controls.Add($cmbDiff)
 
   $btnOk = New-Object Windows.Forms.Button
-  $btnOk.Text = "Speichern"; $btnOk.Location = New-Object Drawing.Point(186, 262); $btnOk.Size = New-Object Drawing.Size(90, 30)
+  $btnOk.Text = "Save"; $btnOk.Location = New-Object Drawing.Point(186, 262); $btnOk.Size = New-Object Drawing.Size(90, 30)
   $btnOk.BackColor = [Drawing.Color]::FromArgb(46, 125, 50); $btnOk.ForeColor = [Drawing.Color]::White
   $dlg.Controls.Add($btnOk)
   $btnCancel = New-Object Windows.Forms.Button
-  $btnCancel.Text = "Abbrechen"; $btnCancel.Location = New-Object Drawing.Point(280, 262); $btnCancel.Size = New-Object Drawing.Size(80, 30)
+  $btnCancel.Text = "Cancel"; $btnCancel.Location = New-Object Drawing.Point(280, 262); $btnCancel.Size = New-Object Drawing.Size(80, 30)
   $btnCancel.BackColor = [Drawing.Color]::FromArgb(45, 49, 64); $btnCancel.ForeColor = $dlg.ForeColor
   $dlg.Controls.Add($btnCancel)
 
@@ -226,15 +226,15 @@ function Show-PreGameOptions {
 }
 
 function Show-Err([string]$text) {
-  [Windows.Forms.MessageBox]::Show($text, "Fehler", "OK", "Error") | Out-Null
+  [Windows.Forms.MessageBox]::Show($text, "Error", "OK", "Error") | Out-Null
 }
 
 function Test-TokenFormat([string]$token) {
   return ($token -match "^[A-Za-z0-9_\-]{1,64}$")
 }
 
-# Live-Pruefung: verbindet kurz zum Relay und testet das Token.
-# Rueckgabe: "ok" | "badformat" | "unreachable" | "badtoken"
+# Live check: briefly connects to the relay and tests the token.
+# Returns: "ok" | "badformat" | "unreachable" | "badtoken"
 function Test-CoopServer([string]$server, [string]$token) {
   if ($server -notmatch "^([^\s:]+):(\d{1,5})$") { return "badformat" }
   $sHost = $Matches[1]; $sPort = [int]$Matches[2]
@@ -253,19 +253,19 @@ function Test-CoopServer([string]$server, [string]$token) {
     try {
       $n = $stream.Read($buf, 0, 512)
       $c.Close()
-      if ($n -le 0) { return "badtoken" }   # Server hat sofort getrennt
+      if ($n -le 0) { return "badtoken" }   # server disconnected immediately
       $resp = [Text.Encoding]::UTF8.GetString($buf, 0, $n)
       if ($resp -match "bad token" -or $resp -match "auth required") { return "badtoken" }
-      return "ok"                            # Daten anderer Spieler -> auth ok
+      return "ok"                            # got other players' data -> auth ok
     } catch {
-      # Lese-Timeout: Server schweigt bei erfolgreicher Auth -> ok
+      # read timeout: server stays silent on successful auth -> ok
       $c.Close()
       return "ok"
     }
   } catch { return "unreachable" }
 }
 
-# --- Relay-Prozess -----------------------------------------------------------
+# --- Relay process -----------------------------------------------------------
 
 $script:RelayProc = $null
 function Start-Relay {
@@ -284,7 +284,7 @@ function Stop-Relay {
 $form = New-Object Windows.Forms.Form
 $form.Text = "Rejuvenation Co-op Launcher"
 $form.ClientSize = New-Object Drawing.Size(640, 780)
-$form.FormBorderStyle = "Sizable"          # frei skalierbar
+$form.FormBorderStyle = "Sizable"          # freely resizable
 $form.MinimumSize = New-Object Drawing.Size(600, 720)
 $form.MaximizeBox = $true
 $form.BackColor = [Drawing.Color]::FromArgb(24, 26, 34)
@@ -312,8 +312,8 @@ function New-Button($text, $x, $y, $w) {
   $form.Controls.Add($b); return $b
 }
 
-# Abschnitt: Spiel (oben, Breite waechst mit)
-New-Label "SPIEL" 20 15 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
+# Section: game (top, grows with width)
+New-Label "GAME" 20 15 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
 $txtGame = New-TextBox 20 38 520
 $txtGame.Anchor = "Top,Left,Right"
 $txtGame.Text = Find-GameExe
@@ -322,35 +322,35 @@ $btnBrowse.Anchor = "Top,Right"
 $btnBrowse.BackColor = [Drawing.Color]::FromArgb(45, 49, 64)
 $btnBrowse.Add_Click({
   $dlg = New-Object Windows.Forms.OpenFileDialog
-  $dlg.Filter = "Spiel-EXE (*.exe)|*.exe"
-  $dlg.Title = "Rejuvenation.exe auswaehlen"
+  $dlg.Filter = "Game EXE (*.exe)|*.exe"
+  $dlg.Title = "Select Rejuvenation.exe"
   if ($dlg.ShowDialog() -eq "OK") {
     $txtGame.Text = $dlg.FileName
     Save-Setting "gameExe" $dlg.FileName
   }
 })
 
-# Abschnitt: ZeroTier-Status
-New-Label "NETZWERK" 20 82 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
-$lblZt = New-Label "lade..." 20 104 600 64
+# Section: ZeroTier status
+New-Label "NETWORK" 20 82 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
+$lblZt = New-Label "loading..." 20 104 600 64
 $lblZt.Anchor = "Top,Left,Right"
 $lblZt.Font = New-Object Drawing.Font("Consolas", 9.5)
 
-# Abschnitt: Hosten
-New-Label "HOSTEN" 20 178 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
-New-Label "Passwort/Token:" 20 206 115 22
+# Section: host
+New-Label "HOST" 20 178 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162) }
+New-Label "Password/Token:" 20 206 115 22
 $txtToken = New-TextBox 140 204 300
 $txtToken.Text = Load-Token
-$btnHost = New-Button "Server starten" 20 238 190
-$btnStop = New-Button "Server stoppen" 220 238 140
+$btnHost = New-Button "Start Server" 20 238 190
+$btnStop = New-Button "Stop Server" 220 238 140
 $btnStop.BackColor = [Drawing.Color]::FromArgb(90, 40, 60)
 $btnStop.Visible = $false
-$btnOptions = New-Button "Pre-Game Optionen" 372 238 248
+$btnOptions = New-Button "Pre-Game Options" 372 238 248
 $btnOptions.Anchor = "Top,Right"
 $btnOptions.BackColor = [Drawing.Color]::FromArgb(52, 44, 78)
 $btnOptions.Add_Click({ Show-PreGameOptions })
 
-# Anleitungs-Kasten: waechst mit dem Fenster (horizontal + vertikal)
+# Instructions box: grows with the window (horizontal + vertical)
 $txtShare = New-Object Windows.Forms.TextBox
 $txtShare.Multiline = $true; $txtShare.ReadOnly = $true; $txtShare.ScrollBars = "Vertical"
 $txtShare.Location = New-Object Drawing.Point(20, 282); $txtShare.Size = New-Object Drawing.Size(500, 200)
@@ -359,13 +359,13 @@ $txtShare.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $txtShare.ForeColor
 $txtShare.Font = New-Object Drawing.Font("Consolas", 9.5)
 $txtShare.BorderStyle = "FixedSingle"
 $form.Controls.Add($txtShare)
-$btnCopy = New-Button "Kopieren" 530 282 90
+$btnCopy = New-Button "Copy" 530 282 90
 $btnCopy.Anchor = "Top,Right"
 $btnCopy.BackColor = [Drawing.Color]::FromArgb(45, 49, 64)
 $btnCopy.Add_Click({ if ($txtShare.Text) { Set-Clipboard -Value $txtShare.Text } })
 
-# Abschnitt: Beitreten (haengt am unteren Rand)
-New-Label "BEITRETEN" 20 502 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162); $_.Anchor = "Bottom,Left" }
+# Section: join (anchored to the bottom)
+New-Label "JOIN" 20 502 200 18 | ForEach-Object { $_.ForeColor = [Drawing.Color]::FromArgb(138, 144, 162); $_.Anchor = "Bottom,Left" }
 $lblJs = New-Label "Server (ip:port):" 20 530 115 22; $lblJs.Anchor = "Bottom,Left"
 $txtJoinServer = New-TextBox 140 528 300
 $txtJoinServer.Anchor = "Bottom,Left"
@@ -373,39 +373,39 @@ $txtJoinServer.Text = Get-Setting "lastServer"
 $lblJt = New-Label "Token:" 20 562 115 22; $lblJt.Anchor = "Bottom,Left"
 $txtJoinToken = New-TextBox 140 560 300
 $txtJoinToken.Anchor = "Bottom,Left"
-$btnJoin = New-Button "Verbinden + Spiel starten" 20 594 230
+$btnJoin = New-Button "Connect + Start Game" 20 594 230
 $btnJoin.Anchor = "Bottom,Left"
-$lblNw = New-Label "ZeroTier-Netz-ID:" 20 640 115 22; $lblNw.Anchor = "Bottom,Left"
+$lblNw = New-Label "ZeroTier Network ID:" 20 640 120 22; $lblNw.Anchor = "Bottom,Left"
 $txtNwid = New-TextBox 140 638 200
 $txtNwid.Anchor = "Bottom,Left"
 $txtNwid.Text = Get-Setting "lastNetworkId"
-$btnZtJoin = New-Button "Netz beitreten" 350 636 140
+$btnZtJoin = New-Button "Join Network" 350 636 140
 $btnZtJoin.Anchor = "Bottom,Left"
 $btnZtJoin.BackColor = [Drawing.Color]::FromArgb(45, 49, 64)
 
-# Statuszeile (unten, Breite waechst mit)
+# Status line (bottom, grows with width)
 $lblStatus = New-Label "" 20 688 600 70
 $lblStatus.Anchor = "Bottom,Left,Right"
 $lblStatus.Font = New-Object Drawing.Font("Consolas", 9)
 $lblStatus.ForeColor = [Drawing.Color]::FromArgb(154, 161, 181)
 
-# --- Aktionen ----------------------------------------------------------------
+# --- Actions -----------------------------------------------------------------
 
 $btnHost.Add_Click({
-  # Vorbedingungen pruefen, bevor irgendwas startet
+  # check preconditions before anything starts
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Show-Err "Node.js wurde nicht gefunden -- der Server (Relay) braucht es.`nInstallieren: nodejs.org"
+    Show-Err "Node.js not found -- the server (relay) needs it.`nInstall it: nodejs.org"
     return
   }
   $token = $txtToken.Text.Trim()
   if (-not $token) { $token = New-RandomToken; $txtToken.Text = $token }
   if (-not (Test-TokenFormat $token)) {
-    Show-Err "Ungueltiges Token: nur Buchstaben, Ziffern, - und _ erlaubt (max. 64 Zeichen), keine Leerzeichen."
+    Show-Err "Invalid token: only letters, digits, - and _ allowed (max 64 chars), no spaces."
     return
   }
   $exe = $txtGame.Text.Trim()
   if ($exe -and -not (Test-Path $exe)) {
-    Show-Err "Spiel-EXE nicht gefunden:`n$exe`n`nPfad pruefen oder ueber '...' neu auswaehlen."
+    Show-Err "Game EXE not found:`n$exe`n`nCheck the path or re-select via '...'."
     return
   }
   Save-Token $token
@@ -422,35 +422,35 @@ $btnStop.Add_Click({ Stop-Relay })
 $btnJoin.Add_Click({
   $exe = $txtGame.Text.Trim()
   if (-not $exe) {
-    Show-Err "Bitte zuerst oben die Rejuvenation.exe auswaehlen ('...'-Button)."
+    Show-Err "Please select Rejuvenation.exe above first ('...' button)."
     return
   }
   if (-not (Test-Path $exe)) {
-    Show-Err "Spiel-EXE nicht gefunden:`n$exe`n`nPfad pruefen oder ueber '...' neu auswaehlen."
+    Show-Err "Game EXE not found:`n$exe`n`nCheck the path or re-select via '...'."
     return
   }
   $server = $txtJoinServer.Text.Trim()
   $token = $txtJoinToken.Text.Trim()
   if (-not $server) {
-    Show-Err "Server-Adresse fehlt (bekommst du vom Host, z.B. 10.147.20.10:7777)."
+    Show-Err "Server address missing (get it from the host, e.g. 10.147.20.10:7777)."
     return
   }
   if ($server -notmatch "^([^\s:]+):(\d{1,5})$") {
-    Show-Err "Server-Adresse hat das falsche Format.`nRichtig: ip:port  --  z.B. 10.147.20.10:7777"
+    Show-Err "Server address has the wrong format.`nCorrect: ip:port  --  e.g. 10.147.20.10:7777"
     return
   }
   if ($token -and -not (Test-TokenFormat $token)) {
-    Show-Err "Ungueltiges Token: nur Buchstaben, Ziffern, - und _ erlaubt, keine Leerzeichen."
+    Show-Err "Invalid token: only letters, digits, - and _ allowed, no spaces."
     return
   }
-  # Live-Test: erst verbinden + Token pruefen, dann Spiel starten
-  $btnJoin.Enabled = $false; $btnJoin.Text = "pruefe..."
+  # live test: connect + check the token first, then start the game
+  $btnJoin.Enabled = $false; $btnJoin.Text = "checking..."
   $result = Test-CoopServer $server $token
-  $btnJoin.Enabled = $true; $btnJoin.Text = "Verbinden + Spiel starten"
+  $btnJoin.Enabled = $true; $btnJoin.Text = "Connect + Start Game"
   switch ($result) {
-    "badformat"   { Show-Err "Server-Adresse hat das falsche Format (ip:port)."; return }
-    "unreachable" { Show-Err "Server nicht erreichbar: $server`n`nMoegliche Ursachen:`n- IP oder Port falsch getippt`n- Der Host hat den Server nicht gestartet`n- ZeroTier nicht verbunden / noch nicht freigegeben (siehe NETZWERK oben)"; return }
-    "badtoken"    { Show-Err "Der Server hat die Verbindung abgelehnt: Passwort/Token ist falsch.`nToken beim Host nachfragen."; return }
+    "badformat"   { Show-Err "Server address has the wrong format (ip:port)."; return }
+    "unreachable" { Show-Err "Server not reachable: $server`n`nPossible causes:`n- IP or port typed wrong`n- The host hasn't started the server`n- ZeroTier not connected / not yet authorized (see NETWORK above)"; return }
+    "badtoken"    { Show-Err "The server rejected the connection: password/token is wrong.`nAsk the host for the token."; return }
   }
   Write-CoopConfig (Split-Path $exe) $server $token
   Write-CoopOptions (Split-Path $exe) "join"
@@ -461,19 +461,19 @@ $btnJoin.Add_Click({
 $btnZtJoin.Add_Click({
   $nwid = $txtNwid.Text.Trim().ToLower()
   if ($nwid -notmatch "^[0-9a-f]{16}$") {
-    [Windows.Forms.MessageBox]::Show("Network ID muss 16 Zeichen (0-9a-f) haben.", "Ungueltig") | Out-Null
+    [Windows.Forms.MessageBox]::Show("Network ID must be 16 characters (0-9a-f).", "Invalid") | Out-Null
     return
   }
   $out = & $ZtExe -q join $nwid 2>$null
   if ($out -match "OK") {
     Save-Setting "lastNetworkId" $nwid
-    [Windows.Forms.MessageBox]::Show("Beigetreten. Der Host muss dich jetzt im ZeroTier-Dashboard freigeben (Auth-Haekchen). Danach erscheint oben deine IP.", "Beigetreten") | Out-Null
+    [Windows.Forms.MessageBox]::Show("Joined. The host must now authorize you in the ZeroTier dashboard (Auth checkbox). After that your IP appears above.", "Joined") | Out-Null
   } else {
-    [Windows.Forms.MessageBox]::Show("Join fehlgeschlagen. Laeuft der ZeroTier-Dienst?", "Fehler") | Out-Null
+    [Windows.Forms.MessageBox]::Show("Join failed. Is the ZeroTier service running?", "Error") | Out-Null
   }
 })
 
-# --- Timer: Status aktualisieren --------------------------------------------
+# --- Timer: refresh status ---------------------------------------------------
 
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 3000
@@ -483,79 +483,79 @@ $timer.Add_Tick({
   $relayUp = Test-RelayPort
   $ownRelay = ($script:RelayProc -and -not $script:RelayProc.HasExited)
   $btnStop.Visible = $ownRelay
-  if ($ownRelay) { $btnHost.Text = "Server laeuft"; $btnHost.Enabled = $false }
-  elseif ($relayUp) { $btnHost.Text = "Server laeuft (extern)"; $btnHost.Enabled = $false }
-  else { $btnHost.Text = "Server starten"; $btnHost.Enabled = $true }
+  if ($ownRelay) { $btnHost.Text = "Server running"; $btnHost.Enabled = $false }
+  elseif ($relayUp) { $btnHost.Text = "Server running (external)"; $btnHost.Enabled = $false }
+  else { $btnHost.Text = "Start Server"; $btnHost.Enabled = $true }
 
   if ($zt.ok) {
     $tok = Load-Token
-    if (-not $tok) { $tok = "(noch keins -- wird bei 'Server starten' erzeugt)" }
+    if (-not $tok) { $tok = "(none yet -- created when you click 'Start Server')" }
     $prefix = ""
     if (-not $relayUp) {
-      $prefix = ">>> SERVER IST AUS -- erst 'Server starten' klicken, sonst kann niemand beitreten! <<<`r`n`r`n"
+      $prefix = ">>> SERVER IS OFF -- click 'Start Server' first, or nobody can join! <<<`r`n`r`n"
     }
     $txtShare.Text = $prefix + @"
 =================================================
-  POKEMON REJUVENATION CO-OP  --  SO MACHST DU MIT
+  POKEMON REJUVENATION CO-OP  --  HOW TO JOIN
 =================================================
 
-  SCHRITT 1 -- Spiel installieren
-  -------------------------------
+  STEP 1 -- Install the game
+  --------------------------
   Download:  rebornevo.com/rejuvdown
-  (Version 14, komplett entpacken)
+  (Version 14, fully extracted)
 
 
-  SCHRITT 2 -- Co-op-Mod installieren
-  -----------------------------------
-  Den 'patch'-Ordner vom Host in den
-  Spielordner kopieren.
-  (wichtig: patch\Mods\coop.rb)
+  STEP 2 -- Install the co-op mod
+  -------------------------------
+  Copy the 'patch' folder from the host
+  into the game folder.
+  (important: patch\Mods\coop.rb)
 
 
-  SCHRITT 3 -- ZeroTier installieren
-  ----------------------------------
+  STEP 3 -- Install ZeroTier
+  --------------------------
   Download:  zerotier.com/download
 
 
-  SCHRITT 4 -- Netz beitreten
-  ---------------------------
+  STEP 4 -- Join the network
+  --------------------------
   Network ID:  $($zt.nwid)
-  (ZeroTier-Symbol unten rechts
-   -> Join Network -> ID eingeben)
+  (ZeroTier icon in the tray
+   -> Join Network -> enter the ID)
 
 
-  SCHRITT 5 -- Freigeben lassen
-  -----------------------------
-  Dem Host Bescheid sagen -- er gibt
-  dich im ZeroTier-Dashboard frei.
+  STEP 5 -- Get authorized
+  ------------------------
+  Tell the host -- they authorize you
+  in the ZeroTier dashboard.
 
 
-  SCHRITT 6 -- Verbinden
-  ----------------------
-  Im Launcher unter BEITRETEN:
+  STEP 6 -- Connect
+  -----------------
+  In the launcher under JOIN:
 
       Server:  $($zt.ip):$RelayPort
       Token:   $tok
 
-  (oder im Spielordner die Datei
-   'coop_config.txt' anlegen mit:
+  (or create a file 'coop_config.txt'
+   in the game folder with:
       server = $($zt.ip):$RelayPort
       token  = $tok )
 
 
-  SCHRITT 7 -- Spiel starten. Fertig!
-  -----------------------------------
-  Ihr seht euch, sobald ihr auf
-  derselben Map seid.
+  STEP 7 -- Start the game. Done!
+  -------------------------------
+  You'll see each other once you're
+  on the same map.
 "@
   } else {
-    $txtShare.Text = "ZeroTier ist nicht verbunden -- siehe NETZWERK oben.`r`nOhne ZeroTier-IP kann keine Mitspieler-Anleitung erzeugt werden."
+    $txtShare.Text = "ZeroTier is not connected -- see NETWORK above.`r`nWithout a ZeroTier IP no join instructions can be generated."
   }
 
-  # eigene Verbindung aus coop_net.txt
+  # own connection from coop_net.txt
   $exe = $txtGame.Text.Trim()
   $statusLines = @()
-  if ($relayUp) { $statusLines += "Relay: laeuft auf Port $RelayPort" } else { $statusLines += "Relay: aus" }
+  if ($relayUp) { $statusLines += "Relay: running on port $RelayPort" } else { $statusLines += "Relay: off" }
   if ($exe) {
     $netFile = Join-Path (Split-Path $exe) "coop_net.txt"
     if (Test-Path $netFile) {
@@ -569,7 +569,7 @@ $timer.Start()
 
 $form.Add_FormClosing({ $timer.Stop(); Stop-Relay })
 
-# initiale Anzeige
+# initial display
 $lblZt.Text = (Get-ZtStatus).text
 
 [void]$form.ShowDialog()

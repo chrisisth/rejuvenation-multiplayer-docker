@@ -37,7 +37,9 @@ first time it applies, so a run's world never silently changes.
 
 ## Quick start for players (joining)
 
-You want to join a friend's game:
+You want to join a friend's game.
+
+**Windows:**
 
 1. **Get the installer:** download this repo (or the release ZIP).
 2. **Get a join code:** your host sends you a *join code* (one long text string).
@@ -47,6 +49,22 @@ You want to join a friend's game:
 4. **Install ZeroTier** (button in the installer) and join the network.
    Your host then has to **authorize** your device once (see below).
 5. **Start the game.** You should see each other on the same map.
+
+**macOS:**
+
+1. Download this repo (or the release ZIP) and get a join code from your host.
+2. **Double-click `installer/install-macos.command`.** (If macOS blocks it:
+   right-click → Open, or run `chmod +x install-macos.command` once.)
+   - Drag your Rejuvenation folder / `.app` into the Terminal window.
+   - Paste the join code.
+   - The script copies the mod, writes the connection, and joins the ZeroTier network.
+3. **Install [ZeroTier for Mac](https://www.zerotier.com/download/)** if you haven't;
+   the host authorizes your device once.
+4. **Start the game.** You should see each other on the same map.
+
+> The mod (`coop.rb`) and relay are cross-platform — only the setup helper differs
+> per OS. The pre-game options (difficulty / randomizer / soul link) are set by the
+> **host** and reach macOS joiners automatically over the network.
 
 ---
 

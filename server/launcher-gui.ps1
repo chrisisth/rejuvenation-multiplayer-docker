@@ -101,6 +101,130 @@ function Write-CoopConfig([string]$gameDir, [string]$server, [string]$token) {
   ($lines -join "`n") + "`n" | Set-Content -Encoding ascii (Join-Path $gameDir "coop_config.txt")
 }
 
+# --- Pre-Game-Optionen -------------------------------------------------------
+function Get-OptOr([string]$name, [string]$default) {
+  $v = Get-Setting $name
+  if ([string]::IsNullOrWhiteSpace($v)) { return $default }
+  return $v
+}
+function Write-CoopOptions([string]$gameDir, [string]$role = "host") {
+  $sl   = Get-OptOr "optSoulLink"    "off"
+  $rw   = Get-OptOr "optRandWild"    "off"
+  $rt   = Get-OptOr "optRandTrainer" "off"
+  $rs   = Get-OptOr "optRandStatic"  "off"
+  $seed = Get-OptOr "optRandSeed"    "0"
+  $diff = Get-OptOr "optDifficulty"  "normal"
+  $lines = @(
+    "# vom Launcher geschrieben (Pre-Game-Optionen)",
+    "role            = $role",
+    "soul_link       = $sl",
+    "rand_wild       = $rw",
+    "rand_trainer    = $rt",
+    "rand_static     = $rs",
+    "randomizer_seed = $seed",
+    "difficulty      = $diff"
+  )
+  ($lines -join "`n") + "`n" | Set-Content -Encoding ascii (Join-Path $gameDir "coop_options.txt")
+}
+
+function Show-PreGameOptions {
+  $dlg = New-Object Windows.Forms.Form
+  $dlg.Text = "Pre-Game Optionen"
+  $dlg.ClientSize = New-Object Drawing.Size(372, 316)
+  $dlg.StartPosition = "CenterParent"
+  $dlg.FormBorderStyle = "FixedDialog"; $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false
+  $dlg.BackColor = [Drawing.Color]::FromArgb(24, 26, 34)
+  $dlg.ForeColor = [Drawing.Color]::FromArgb(220, 224, 234)
+  $dlg.Font = New-Object Drawing.Font("Segoe UI", 9.5)
+
+  $info = New-Object Windows.Forms.Label
+  $info.Text = "Beeinflusst das Spiel. Gilt fuer beide Spieler (Host stellt ein)."
+  $info.Location = New-Object Drawing.Point(16, 12); $info.Size = New-Object Drawing.Size(330, 32)
+  $info.ForeColor = [Drawing.Color]::FromArgb(150, 156, 174)
+  $dlg.Controls.Add($info)
+
+  $cbSoul = New-Object Windows.Forms.CheckBox
+  $cbSoul.Text = "Soul Link  (verkettete Ohnmacht der Teams)"
+  $cbSoul.Location = New-Object Drawing.Point(16, 52); $cbSoul.Size = New-Object Drawing.Size(330, 24)
+  $cbSoul.Checked = ((Get-OptOr "optSoulLink" "off") -eq "on")
+  $dlg.Controls.Add($cbSoul)
+
+  $lblRand = New-Object Windows.Forms.Label
+  $lblRand.Text = "Randomizer (komplett zufaellig, gleicher Seed):"
+  $lblRand.Location = New-Object Drawing.Point(16, 82); $lblRand.Size = New-Object Drawing.Size(344, 20)
+  $lblRand.ForeColor = [Drawing.Color]::FromArgb(150, 156, 174)
+  $dlg.Controls.Add($lblRand)
+
+  $cbRandWild = New-Object Windows.Forms.CheckBox
+  $cbRandWild.Text = "Wild-Pokemon"
+  $cbRandWild.Location = New-Object Drawing.Point(32, 104); $cbRandWild.Size = New-Object Drawing.Size(320, 22)
+  $cbRandWild.Checked = ((Get-OptOr "optRandWild" "off") -eq "on")
+  $dlg.Controls.Add($cbRandWild)
+
+  $cbRandTrainer = New-Object Windows.Forms.CheckBox
+  $cbRandTrainer.Text = "Trainer-Teams"
+  $cbRandTrainer.Location = New-Object Drawing.Point(32, 128); $cbRandTrainer.Size = New-Object Drawing.Size(320, 22)
+  $cbRandTrainer.Checked = ((Get-OptOr "optRandTrainer" "off") -eq "on")
+  $dlg.Controls.Add($cbRandTrainer)
+
+  $cbRandStatic = New-Object Windows.Forms.CheckBox
+  $cbRandStatic.Text = "Geschenk / Statisch"
+  $cbRandStatic.Location = New-Object Drawing.Point(32, 152); $cbRandStatic.Size = New-Object Drawing.Size(320, 22)
+  $cbRandStatic.Checked = ((Get-OptOr "optRandStatic" "off") -eq "on")
+  $dlg.Controls.Add($cbRandStatic)
+
+  $lblSeed = New-Object Windows.Forms.Label
+  $lblSeed.Text = "Seed (leer = zufaellig):"
+  $lblSeed.Location = New-Object Drawing.Point(32, 180); $lblSeed.Size = New-Object Drawing.Size(140, 22)
+  $dlg.Controls.Add($lblSeed)
+  $txtSeed = New-Object Windows.Forms.TextBox
+  $txtSeed.Location = New-Object Drawing.Point(178, 178); $txtSeed.Size = New-Object Drawing.Size(180, 22)
+  $txtSeed.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $txtSeed.ForeColor = $dlg.ForeColor
+  $s = Get-OptOr "optRandSeed" "0"; if ($s -ne "0") { $txtSeed.Text = $s }
+  $dlg.Controls.Add($txtSeed)
+
+  $lblDiff = New-Object Windows.Forms.Label
+  $lblDiff.Text = "Schwierigkeit (MP):"
+  $lblDiff.Location = New-Object Drawing.Point(16, 212); $lblDiff.Size = New-Object Drawing.Size(150, 22)
+  $dlg.Controls.Add($lblDiff)
+  $cmbDiff = New-Object Windows.Forms.ComboBox
+  $cmbDiff.DropDownStyle = "DropDownList"
+  $cmbDiff.Location = New-Object Drawing.Point(170, 210); $cmbDiff.Size = New-Object Drawing.Size(188, 24)
+  [void]$cmbDiff.Items.AddRange(@("Light", "Normal", "Hard", "Very Hard"))
+  $diffMap = @{ "light" = "Light"; "normal" = "Normal"; "hard" = "Hard"; "veryhard" = "Very Hard" }
+  $cur = Get-OptOr "optDifficulty" "normal"
+  $cmbDiff.SelectedItem = $diffMap[$cur]; if (-not $cmbDiff.SelectedItem) { $cmbDiff.SelectedIndex = 1 }
+  $dlg.Controls.Add($cmbDiff)
+
+  $btnOk = New-Object Windows.Forms.Button
+  $btnOk.Text = "Speichern"; $btnOk.Location = New-Object Drawing.Point(186, 262); $btnOk.Size = New-Object Drawing.Size(90, 30)
+  $btnOk.BackColor = [Drawing.Color]::FromArgb(46, 125, 50); $btnOk.ForeColor = [Drawing.Color]::White
+  $dlg.Controls.Add($btnOk)
+  $btnCancel = New-Object Windows.Forms.Button
+  $btnCancel.Text = "Abbrechen"; $btnCancel.Location = New-Object Drawing.Point(280, 262); $btnCancel.Size = New-Object Drawing.Size(80, 30)
+  $btnCancel.BackColor = [Drawing.Color]::FromArgb(45, 49, 64); $btnCancel.ForeColor = $dlg.ForeColor
+  $dlg.Controls.Add($btnCancel)
+
+  $btnOk.Add_Click({
+    $rev = @{ "Light" = "light"; "Normal" = "normal"; "Hard" = "hard"; "Very Hard" = "veryhard" }
+    Save-Setting "optSoulLink"    ($(if ($cbSoul.Checked) { "on" } else { "off" }))
+    Save-Setting "optRandWild"    ($(if ($cbRandWild.Checked) { "on" } else { "off" }))
+    Save-Setting "optRandTrainer" ($(if ($cbRandTrainer.Checked) { "on" } else { "off" }))
+    Save-Setting "optRandStatic"  ($(if ($cbRandStatic.Checked) { "on" } else { "off" }))
+    $seedVal = $txtSeed.Text.Trim()
+    $anyRand = $cbRandWild.Checked -or $cbRandTrainer.Checked -or $cbRandStatic.Checked
+    if ($anyRand -and ($seedVal -eq "" -or $seedVal -eq "0")) {
+      $seedVal = [string](Get-Random -Minimum 1 -Maximum 2147483647)
+    }
+    if ($seedVal -eq "") { $seedVal = "0" }
+    Save-Setting "optRandSeed"    $seedVal
+    Save-Setting "optDifficulty"  $rev[[string]$cmbDiff.SelectedItem]
+    $dlg.DialogResult = "OK"; $dlg.Close()
+  })
+  $btnCancel.Add_Click({ $dlg.DialogResult = "Cancel"; $dlg.Close() })
+  [void]$dlg.ShowDialog()
+}
+
 function Show-Err([string]$text) {
   [Windows.Forms.MessageBox]::Show($text, "Fehler", "OK", "Error") | Out-Null
 }
@@ -221,6 +345,10 @@ $btnHost = New-Button "Server starten" 20 238 190
 $btnStop = New-Button "Server stoppen" 220 238 140
 $btnStop.BackColor = [Drawing.Color]::FromArgb(90, 40, 60)
 $btnStop.Visible = $false
+$btnOptions = New-Button "Pre-Game Optionen" 372 238 248
+$btnOptions.Anchor = "Top,Right"
+$btnOptions.BackColor = [Drawing.Color]::FromArgb(52, 44, 78)
+$btnOptions.Add_Click({ Show-PreGameOptions })
 
 # Anleitungs-Kasten: waechst mit dem Fenster (horizontal + vertikal)
 $txtShare = New-Object Windows.Forms.TextBox
@@ -284,6 +412,7 @@ $btnHost.Add_Click({
   Start-Relay
   if ($exe) {
     Write-CoopConfig (Split-Path $exe) "127.0.0.1:$RelayPort" $token
+    Write-CoopOptions (Split-Path $exe) "host"
     Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
   }
 })
@@ -324,6 +453,7 @@ $btnJoin.Add_Click({
     "badtoken"    { Show-Err "Der Server hat die Verbindung abgelehnt: Passwort/Token ist falsch.`nToken beim Host nachfragen."; return }
   }
   Write-CoopConfig (Split-Path $exe) $server $token
+  Write-CoopOptions (Split-Path $exe) "join"
   Save-Setting "lastServer" $server
   Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
 })

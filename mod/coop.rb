@@ -27,8 +27,10 @@ module Coop
   DEFAULT_HOST = "127.0.0.1"   # Fallback; ueberschrieben durch coop_config.txt
   DEFAULT_PORT = 7777
   CONFIG_FILE  = "coop_config.txt"
+  OPTIONS_FILE = "coop_options.txt"   # Pre-Game-Optionen (Launcher schreibt sie)
   LOG_ERR      = "coop_error.txt"
   STALE        = 3.0           # Sekunden ohne Update -> Remote-Spieler entfernen
+  COOP_DOUBLE_TEAM = 3         # Co-op-Doppelkampf: je Spieler nur die ersten N Pokemon
 
   @mutex   = Mutex.new
   @remote  = {}            # id => { :m, :x, :y, :d, :name, :seen }
@@ -80,6 +82,61 @@ module Coop
     @token = ""
   end
 
+  # Pre-Game-Optionen aus coop_options.txt lesen (key = value). Setzt $coop_options.
+  # Defaults, falls Datei fehlt: alles aus / normale Schwierigkeit.
+  def self.default_options
+    { :soul_link => false,
+      :rand_wild => false, :rand_trainer => false, :rand_static => false,
+      :rand_seed => 0, :difficulty => "normal", :role => "host" }
+  end
+
+  def self.truthy?(v)
+    %w[on true 1 yes ja an].include?(v.to_s.strip.downcase)
+  end
+
+  def self.load_options
+    opts = default_options
+    if File.exist?(OPTIONS_FILE)
+      File.read(OPTIONS_FILE).each_line do |raw|
+        line = raw.strip
+        next if line == "" || line.start_with?("#")
+        next unless line.include?("=")
+        k, v = line.split("=", 2)
+        key = k.strip.downcase
+        val = v.strip
+        case key
+        when "soul_link", "soullink"
+          opts[:soul_link] = truthy?(val)
+        when "rand_wild", "randomizer_wild"
+          opts[:rand_wild] = truthy?(val)
+        when "rand_trainer", "randomizer_trainer"
+          opts[:rand_trainer] = truthy?(val)
+        when "rand_static", "randomizer_static", "rand_gift"
+          opts[:rand_static] = truthy?(val)
+        when "randomizer", "random"   # Alt-Master -> wirkt auf Wild
+          opts[:rand_wild] = true if truthy?(val)
+        when "randomizer_seed", "rand_seed", "seed"
+          opts[:rand_seed] = val.to_i
+        when "difficulty", "schwierigkeit"
+          d = val.downcase.gsub(/\s+/, "")
+          d = "light"    if %w[leicht easy].include?(d)
+          d = "hard"     if d == "schwer"
+          d = "veryhard" if %w[sehrschwer brutal hardhard].include?(d)
+          opts[:difficulty] = %w[light normal hard veryhard].include?(d) ? d : "normal"
+        when "role", "rolle"
+          opts[:role] = (val.downcase == "join" || val.downcase == "verbinden") ? "join" : "host"
+        end
+      end
+    end
+    opts[:randomizer] = opts[:rand_wild] || opts[:rand_trainer] || opts[:rand_static]
+    $coop_options = opts
+    log_info("options: soul_link=#{opts[:soul_link]} rand[w=#{opts[:rand_wild]} t=#{opts[:rand_trainer]} s=#{opts[:rand_static]}] seed=#{opts[:rand_seed]} difficulty=#{opts[:difficulty]}")
+    opts
+  rescue Exception => e
+    log_err("load_options", e)
+    $coop_options = default_options
+  end
+
   def self.parse_hostport(val)
     if val.include?(":")
       h, p = val.split(":", 2)
@@ -128,6 +185,7 @@ module Coop
 
   def self.start
     load_config
+    load_options
     @thread ||= Thread.new do
       begin
         log_info("connecting to relay #{@host}:#{@port} (id=#{@id})")
@@ -145,6 +203,12 @@ module Coop
           if @cached_name && (@last_presence.nil? || now - @last_presence > 5)
             @last_presence = now
             raw_send({ "t" => "presence", "id" => @id, "name" => @cached_name })
+            # Host propagiert seine Randomizer-Config an Verbinder (host-autoritativ).
+            o = $coop_options
+            if o && o[:role] != "join" && (o[:rand_wild] || o[:rand_trainer])
+              raw_send({ "t" => "ropts", "id" => @id, "seed" => o[:rand_seed],
+                         "rw" => o[:rand_wild], "rt" => o[:rand_trainer] })
+            end
           end
           begin
             chunk = @sock.read_nonblock(4096)
@@ -207,6 +271,13 @@ module Coop
       @mutex.synchronize { @bflee_in = true }
     when "presence"
       @mutex.synchronize { @roster[msg["id"]] = { :name => msg["name"], :seen => Time.now } }
+    when "ropts"
+      # Host-Randomizer-Config -> Verbinder uebernimmt Seed+Flags (falls nicht gelockt).
+      adopt_host_rand(msg["seed"], msg["rw"], msg["rt"])
+    when "soul_catch"
+      on_partner_catch(msg["idx"], msg["pid"])
+    when "soul_faint"
+      on_partner_faint(msg["pid"])
     when "pvp_req"
       return unless msg["to"] == @id
       @mutex.synchronize { @pvp_reqs[msg["id"]] = { :name => msg["name"], :time => Time.now } }
@@ -932,6 +1003,261 @@ module Coop
     @mutex.synchronize { @bcmd_in.clear; @bswitch_in.clear; @bflee_in = false }
   end
 
+  # --- Schwierigkeit (MP-Kaempfe): Gegner-Level skalieren -------------------
+  # Faktor je Stufe. Wird NUR beim Initiator VOR der Serialisierung angewandt
+  # -> der Partner bekommt den fertig-skalierten Gegner (deterministisch).
+  def self.difficulty_factor
+    case ($coop_options && $coop_options[:difficulty])
+    when "light"    then 0.8
+    when "hard"     then 1.3
+    when "veryhard" then 1.6
+    else 1.0   # normal
+    end
+  end
+
+  def self.scale_mon_difficulty!(m)
+    return unless m
+    f = difficulty_factor
+    return if f == 1.0
+    base = (m.level rescue nil)
+    return unless base
+    nl = (base * f).round
+    nl = 1   if nl < 1
+    nl = 100 if nl > 100
+    return if nl == base
+    m.level = nl
+    m.calcStats
+    m.hp = m.totalhp
+    log_battle("difficulty #{$coop_options[:difficulty]}: #{m.name} Lv#{base} -> Lv#{nl}")
+  rescue Exception => e
+    log_err("scale_mon_difficulty", e)
+  end
+
+  def self.scale_opponent_difficulty!(mon_or_party)
+    if mon_or_party.is_a?(Array)
+      mon_or_party.each { |m| scale_mon_difficulty!(m) }
+    else
+      scale_mon_difficulty!(mon_or_party)
+    end
+  end
+
+  # --- Randomizer: deterministische Arten-Vertauschung -----------------------
+  # Arten sind Symbole; alle stehen in $cache.pkmn.keys. Gleicher Seed -> gleiches
+  # Mapping auf beiden Rechnern. EIGENER Hash, weil Ruby's String#hash pro Prozess
+  # anders ist (waere sonst desync-Quelle).
+  def self.rand_species_pool
+    return @rand_pool if @rand_pool
+    keys = ($cache.pkmn.keys rescue [])
+    @rand_pool = keys.sort_by(&:to_s)
+    @rand_pool
+  end
+
+  # Save-gebundener Seed hat Vorrang -> die Welt eines laufenden Runs wird NIE
+  # ueberschrieben. Gespeichert als Attribut an $PokemonGlobal (wird als Objekt voll
+  # im Save Marshal-gespeichert; savehash[:PokemonGlobal]).
+  def self.locked_seed
+    return nil unless defined?($PokemonGlobal) && $PokemonGlobal
+    cr = ($PokemonGlobal.coop_rand rescue nil)
+    (cr && cr[:seed] && cr[:seed].to_i != 0) ? cr[:seed].to_i : nil
+  end
+
+  def self.lock_rand_if_needed
+    return unless defined?($PokemonGlobal) && $PokemonGlobal
+    return if locked_seed   # schon fixiert -> nie ueberschreiben
+    seed = (($coop_options && $coop_options[:rand_seed]) || 0).to_i
+    return if seed == 0
+    $PokemonGlobal.coop_rand = { :seed => seed }
+    log_info("randomizer: Seed #{seed} an Spielstand gebunden (PokemonGlobal)")
+  rescue Exception => e
+    log_err("lock_rand", e)
+  end
+
+  # Effektiver Seed: erst der im Save fixierte, sonst der aus den Optionen.
+  def self.eff_rand_seed
+    ls = locked_seed
+    return ls if ls
+    (($coop_options && $coop_options[:rand_seed]) || 0).to_i
+  end
+
+
+  # Deterministischer Hash, prozess-unabhaengig (Ruby's String#hash variiert pro
+  # Prozess -> waere sonst Desync). Gleicher Key + gleicher Seed -> gleiche Art.
+  def self.det_hash(str)
+    str.to_s.each_char.reduce(0) { |a, c| (a * 31 + c.ord) & 0x7fffffff }
+  end
+
+  # FESTE Zuordnung ueber einen Schluessel: ueber den ganzen Run stabil und bei
+  # gleichem Seed auf beiden Rechnern identisch.
+  def self.species_for_key(key)
+    pool = rand_species_pool
+    return nil if pool.nil? || pool.empty?
+    pool[det_hash("#{eff_rand_seed}:#{key}") % pool.length]
+  end
+
+  # Host-autoritativ: der Verbinder (role=join) uebernimmt Seed+Flags vom Host.
+  # Ein bereits im Save fixierter Seed wird NIE ueberschrieben -> nur Warnung.
+  # Laeuft im Netz-Thread (handle_line).
+  def self.adopt_host_rand(seed, rw, rt)
+    return unless $coop_options && $coop_options[:role] == "join"
+    @host_rand_seen = true
+    ls = locked_seed
+    if ls
+      if ls != seed.to_i && !@rand_warned
+        log_info("randomizer WARNUNG: eigener fixierter Seed #{ls} != Host-Seed #{seed} -> ihr spielt unterschiedliche Welten (Co-op-Kaempfe bleiben synchron)")
+        @rand_warned = true
+      end
+      return
+    end
+    $coop_options[:rand_seed]    = seed.to_i
+    $coop_options[:rand_wild]    = (rw ? true : false)
+    $coop_options[:rand_trainer] = (rt ? true : false)
+  end
+
+  # Darf jetzt randomisiert werden? Host: ja (eigene Optionen). Verbinder: erst wenn
+  # Host-Config eingetroffen ODER Save schon gelockt (sonst wuerde er mit falschem
+  # Seed fixieren, bevor der Host propagiert hat).
+  def self.rand_active?(category)
+    return false unless $coop_options && $coop_options[category]
+    if $coop_options[:role] == "join"
+      return false unless (@host_rand_seen || locked_seed)
+    end
+    true
+  end
+
+  # --- Soul Link ------------------------------------------------------------
+  # Verkettung nach Fang-Reihenfolge: mein N-tes gefangenes ($PokemonGlobal.coop_soul
+  # [:mine][N]) <-> N-tes des Partners ([:theirs][N]). Daten im Save persistiert.
+  def self.soul_link_active?
+    $coop_options && $coop_options[:soul_link]
+  end
+
+  def self.soul_data
+    return nil unless defined?($PokemonGlobal) && $PokemonGlobal
+    $PokemonGlobal.coop_soul ||= { :mine => [], :theirs => [], :dead => [] }
+  end
+
+  def self.soul_log_link(idx)
+    sd = soul_data; return unless sd
+    m = sd[:mine][idx]; t = sd[:theirs][idx]
+    log_info("soul: LINK ##{idx}  meins=#{m}  partner=#{t}") if m && t
+  end
+
+  # Eigener Fang -> erfassen + an Partner senden.
+  def self.on_catch(pid)
+    return unless soul_link_active? && pid
+    sd = soul_data; return unless sd
+    return if sd[:mine].include?(pid)   # schon erfasst (kein Doppel)
+    sd[:mine].push(pid)
+    idx = sd[:mine].length - 1
+    send_msg({ "t" => "soul_catch", "idx" => idx, "pid" => pid })
+    log_info("soul: eigener Fang ##{idx} PID=#{pid}")
+    soul_log_link(idx)
+  rescue Exception => e
+    log_err("soul on_catch", e)
+  end
+
+  # Partner-Fang empfangen (handle_line, Netz-Thread).
+  def self.on_partner_catch(idx, pid)
+    return unless soul_link_active?
+    sd = soul_data; return unless sd
+    return unless idx.is_a?(Integer) && idx >= 0
+    sd[:theirs][idx] = pid
+    log_info("soul: Partner-Fang ##{idx} PID=#{pid}")
+    soul_log_link(idx)
+  rescue Exception => e
+    log_err("soul on_partner_catch", e)
+  end
+
+  # Verkettungs-Lookups (fuer SL2 Ohnmacht-Weitergabe).
+  def self.linked_partner_pid(my_pid)
+    sd = soul_data; return nil unless sd
+    i = sd[:mine].index(my_pid); return nil unless i
+    sd[:theirs][i]
+  end
+
+  def self.my_pid_for_partner(partner_pid)
+    sd = soul_data; return nil unless sd
+    i = sd[:theirs].index(partner_pid); return nil unless i
+    sd[:mine][i]
+  end
+
+  def self.soul_dead?(pid)
+    sd = soul_data; sd && sd[:dead].include?(pid)
+  end
+
+  def self.soul_mark_dead(pid)
+    sd = soul_data; return unless sd
+    sd[:dead].push(pid) unless sd[:dead].include?(pid)
+  end
+
+  def self.find_mon_by_pid(pid)
+    return nil unless defined?($Trainer) && $Trainer && $Trainer.party
+    $Trainer.party.each { |m| return m if m && m.personalID == pid }
+    nil
+  end
+
+  # Mein verkettetes Pokemon ist gefallen -> Partner benachrichtigen (nur wenn es
+  # ueberhaupt eine Verkettung hat). Wird im pbFaint-Hook aufgerufen.
+  def self.on_my_faint(pid)
+    return unless soul_link_active? && pid
+    return unless linked_partner_pid(pid)   # nur verkettete
+    soul_mark_dead(pid)
+    send_msg({ "t" => "soul_faint", "pid" => pid })
+    log_info("soul: eigenes verkettetes PID=#{pid} in Ohnmacht -> Partner benachrichtigt")
+  rescue Exception => e
+    log_err("soul on_my_faint", e)
+  end
+
+  # Partner-verkettetes ist gefallen -> mein verkettetes faellt auch (hp=0 + tot).
+  def self.on_partner_faint(partner_pid)
+    return unless soul_link_active?
+    mypid = my_pid_for_partner(partner_pid); return unless mypid
+    soul_mark_dead(mypid)
+    mon = find_mon_by_pid(mypid)
+    if mon
+      mon.hp = 0
+      log_info("soul: Partner-verkettetes fiel -> mein PID=#{mypid} faellt auch (hp=0)")
+    else
+      log_info("soul: Partner-verkettetes fiel -> mein PID=#{mypid} als tot markiert (in Box)")
+    end
+  rescue Exception => e
+    log_err("soul on_partner_faint", e)
+  end
+
+  def self.randomize_wild_species(orig)
+    return orig unless rand_active?(:rand_wild)
+    return orig if ($cache.bosses && $cache.bosses[orig] rescue false)  # Bosse unangetastet (Story)
+    lock_rand_if_needed
+    ns = species_for_key("W:#{orig}") || orig   # Art->Art fest (alle gleichen Wild-Arten gleich)
+    log_battle("randomizer wild: #{orig} -> #{ns}") if ns != orig
+    ns
+  end
+
+  # Trainer-Party vertauschen: PRO SLOT feste Zuordnung (Key = Trainer + Slotindex).
+  # -> Duplikate werden verschieden, aber bei gleichem Seed fuer beide identisch.
+  # Jedes Mon frisch auf der neuen Art neu bauen (gleiches Level, level-gerechtes Moveset).
+  def self.randomize_trainer_party!(tr, tkey = "")
+    return unless tr && tr[2].is_a?(Array)
+    lock_rand_if_needed
+    opp = tr[0]
+    tr[2].each_with_index do |mon, i|
+      next unless mon
+      orig = (mon.species rescue nil)
+      next unless orig
+      ns = species_for_key("T:#{tkey}:#{i}") || orig
+      next if ns == orig
+      lvl = (mon.level rescue 5)
+      begin
+        tr[2][i] = PokeBattle_Pokemon.new(ns, lvl, opp, true)
+        log_battle("randomizer trainer[#{i}]: #{orig} -> #{ns} (Lv#{lvl})")
+      rescue Exception => e
+        log_err("rand_trainer build #{orig}->#{ns}", e)
+      end
+    end
+  rescue Exception => e
+    log_err("randomize_trainer_party", e)
+  end
+
   # --- M3: echter Co-op-Doppelkampf -----------------------------------------
   # Beide Rechner bauen IDENTISCH: [Team A, Team B] vs Wildmon (2v1, lopsided),
   # gleicher Seed. side 0 = Initiator (steuert Slot 0), side 1 = Partner
@@ -947,12 +1273,15 @@ module Coop
     fake = PokeBattle_Trainer.new(pname, pttype)
     fake.id = ptid
     fake.party = pparty
+    # Je Spieler nur die ersten N Pokemon (beide Clients kuerzen gleich -> deterministisch).
+    myteam = $Trainer.party.first(COOP_DOUBLE_TEAM)
+    ppteam = pparty.first(COOP_DOUBLE_TEAM)
     if side == 0
       trainers = [$Trainer, fake]
-      parties  = [$Trainer.party, pparty]
+      parties  = [myteam, ppteam]
     else
       trainers = [fake, $Trainer]
-      parties  = [pparty, $Trainer.party]
+      parties  = [ppteam, myteam]
     end
     clear_lockstep
     $coop_sync = { :seed => seed, :side => side, :partner => partner_id }
@@ -1035,12 +1364,15 @@ module Coop
     fake = PokeBattle_Trainer.new(pname, pttype)
     fake.id = ptid
     fake.party = pparty
+    # Je Spieler nur die ersten N Pokemon (beide Clients kuerzen gleich -> deterministisch).
+    myteam = $Trainer.party.first(COOP_DOUBLE_TEAM)
+    ppteam = pparty.first(COOP_DOUBLE_TEAM)
     if side == 0
       playertrainer = [$Trainer, fake]
-      playerparty   = [$Trainer.party, pparty]
+      playerparty   = [myteam, ppteam]
     else
       playertrainer = [fake, $Trainer]
-      playerparty   = [pparty, $Trainer.party]
+      playerparty   = [ppteam, myteam]
     end
     clear_lockstep
     $coop_sync = { :seed => seed, :side => side, :partner => partner_id }
@@ -1729,6 +2061,80 @@ class PokeBattle_AI
   end
 end
 
+# Randomizer-Seed am Spielstand festmachen: coop_rand wandert via $PokemonGlobal
+# in den Save. Alte Saves ohne das Attribut liefern nil (= nicht fixiert).
+class PokemonGlobalMetadata
+  attr_accessor :coop_rand
+  attr_accessor :coop_soul
+end
+
+# Randomizer: Wild-Arten schon bei der Generierung vertauschen (deterministisch,
+# gleicher Seed auf beiden Rechnern -> gleiche Welt). Greift fuer Solo + Co-op
+# (Co-op: Initiator generiert, serialisiert den fertigen Mon an den Partner).
+alias coop_orig_pbGenerateWildPokemon pbGenerateWildPokemon
+def pbGenerateWildPokemon(species, level, form = nil)
+  if $coop_options && $coop_options[:rand_wild]
+    ns = Coop.randomize_wild_species(species)
+    if ns != species
+      species = ns
+      form = nil   # neue Art -> Default-Form (alte Form waere evtl. ungueltig)
+    end
+  end
+  coop_orig_pbGenerateWildPokemon(species, level, form)
+end
+
+# Soul Link: jedes gespeicherte (gefangene/erhaltene) Pokemon zaehlt als Fang und
+# wird nach Reihenfolge mit dem Partner verkettet.
+alias coop_orig_pbStorePokemon pbStorePokemon
+def pbStorePokemon(pokemon)
+  coop_orig_pbStorePokemon(pokemon)
+  Coop.on_catch(pokemon.personalID) if pokemon && Coop.soul_link_active?
+rescue Exception => e
+  Coop.log_err("pbStorePokemon soul hook", e)
+  raise
+end
+
+# Soul Link: Ohnmacht meines verketteten Pokemon -> Partner weitergeben.
+class PokeBattle_Battler
+  alias coop_soul_pbFaint pbFaint
+  def pbFaint(showMessage = true)
+    coop_soul_pbFaint(showMessage)
+    begin
+      Coop.on_my_faint(self.pokemon.personalID) if Coop.soul_link_active? && self.pokemon
+    rescue StandardError => e
+      Coop.log_err("pbFaint soul hook", e)
+    end
+  end
+end
+
+# Soul Link SL3: TOTE Pokemon bleiben tot -- nicht heilbar (Center/pbHealAll -> heal).
+# @hp bleibt 0 -> dauerhaft ohnmaechtig -> nicht einsetzbar (klassische Nuzlocke-Regel).
+class PokeBattle_Pokemon
+  alias coop_soul_healHP healHP
+  def healHP
+    if Coop.soul_link_active? && Coop.soul_dead?(@personalID)
+      @hp = 0; return
+    end
+    coop_soul_healHP
+  end
+  alias coop_soul_heal heal
+  def heal
+    if Coop.soul_link_active? && Coop.soul_dead?(@personalID)
+      @hp = 0; return
+    end
+    coop_soul_heal
+  end
+end
+
+# Randomizer: Trainer-Teams beim Laden vertauschen (Solo + Co-op). Co-op: Initiator
+# laedt+baut, serialisiert die fertige Party -> Partner konsistent.
+alias coop_orig_pbLoadTrainer pbLoadTrainer
+def pbLoadTrainer(type, name, id, hasLevelCap: false)
+  tr = coop_orig_pbLoadTrainer(type, name, id, hasLevelCap: hasLevelCap)
+  Coop.randomize_trainer_party!(tr, "#{type}:#{name}:#{id}") if tr && Coop.rand_active?(:rand_trainer)
+  tr
+end
+
 # Anfragender: Gate vor Wildkaempfen; bei Annahme -> Sync-Kampf (Seed + bstart).
 alias coop_orig_pbWildBattleObject pbWildBattleObject
 def pbWildBattleObject(*args)
@@ -1741,6 +2147,7 @@ def pbWildBattleObject(*args)
       begin
         p = $coop_battle_partner
         seed = rand(2**30)
+        Coop.scale_opponent_difficulty!(args[0])   # Schwierigkeit VOR Serialisierung
         mon_b64 = Base64.strict_encode64(Marshal.dump(args[0]))
         Coop.send_msg({ "t" => "bstart", "to" => p[0], "seed" => seed, "kind" => "coop_wild", "mon" => mon_b64 })
         Coop.log_battle("coop bstart sent to #{p[0]} seed=#{seed}")
@@ -1787,6 +2194,7 @@ def pbTrainerBattle(*args, **kw, &blk)
           Coop.log_battle("DEBUG: Gegner-Team auf Lv60 geboostet")
         end
         if tr
+          Coop.scale_opponent_difficulty!(tr[2])   # Schwierigkeit VOR Serialisierung
           seed = rand(2**30)
           opp_b64 = Base64.strict_encode64(Marshal.dump([tr[0], tr[1], tr[2]]))
           Coop.send_msg({ "t" => "bstart", "to" => p[0], "seed" => seed, "kind" => "coop_trainer", "opp" => opp_b64 })
@@ -1812,7 +2220,8 @@ end
 class Scene_Map
   alias coop_invite_update update
   def update
-    coop_invite_update
+    coop_invite_update   # ORIGINAL zuerst + UNGEGUARDT -> Exit/SystemExit darf durch (sonst Blackscreen)
+    begin
     Coop.poll_incoming_invite
     Coop.run_pending_pvp                                             # PvP-Kampf im Feld starten
     Coop.set_name($Trainer.name) if defined?($Trainer) && $Trainer   # Praesenz-Name
@@ -1863,6 +2272,40 @@ class Scene_Map
         end
       end
     end
+    # DEBUG: simulierter Fang (Soul Link testen).
+    if Coop::COOP_DEBUG && File.exist?("coop_debug_catch.txt")
+      mt = (File.mtime("coop_debug_catch.txt").to_f rescue 0)
+      if mt != $coop_dbg_catch_mt   # mtime-basiert -> JEDE Instanz faengt 1x pro Datei-Erzeugung
+        $coop_dbg_catch_mt = mt
+        begin
+          mon = PokeBattle_Pokemon.new(:RATTATA, 3, $Trainer)
+          $Trainer.party.push(mon) if $Trainer.party && $Trainer.party.length < 6
+          Coop.log_info("DEBUG trigger -> catch (RATTATA PID=#{mon.personalID})")
+          Coop.on_catch(mon.personalID)
+        rescue Exception => e; Coop.log_err("debug catch", e); end
+      end
+    end
+    # DEBUG: simulierte Ohnmacht eines verketteten Pokemon (Soul Link SL2 testen).
+    if Coop::COOP_DEBUG && File.exist?("coop_debug_faint.txt")
+      deleted = false
+      begin; File.delete("coop_debug_faint.txt"); deleted = true; rescue Exception; end
+      if deleted
+        begin
+          sd = Coop.soul_data
+          pid = sd && sd[:mine].find { |p| Coop.linked_partner_pid(p) }
+          if pid
+            m = Coop.find_mon_by_pid(pid)
+            m.hp = 0 if m
+            Coop.log_info("DEBUG trigger -> faint verkettetes PID=#{pid}")
+            Coop.on_my_faint(pid)
+          else
+            Coop.log_info("DEBUG faint: kein verkettetes Pokemon in Party gefunden")
+          end
+        rescue Exception => e
+          Coop.log_err("debug faint", e)
+        end
+      end
+    end
     # DEBUG: garantierter TRAINERkampf (erster Trainer aus dem Cache).
     if Coop::COOP_DEBUG && File.exist?("coop_debug_trainerbattle.txt")
       deleted = false
@@ -1888,8 +2331,9 @@ class Scene_Map
         end
       end
     end
-  rescue Exception => e
-    Coop.log_err("scene_map invite hook", e)
+    rescue StandardError => e   # NICHT Exception -> SystemExit (Spiel-Exit) durchlassen
+      Coop.log_err("scene_map invite hook", e)
+    end
   end
 end
 

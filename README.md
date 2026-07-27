@@ -90,8 +90,18 @@ You host the session:
    for each new device.
 6. **Firewall:** allow inbound TCP `7777` (see `docs/internet-setup.md`).
 
-A graphical launcher (host/join/ZeroTier status) is in `server/launcher-gui.ps1`
-(`server/start-launcher.bat`).
+### Launchers (host + join + pre-game options, per OS)
+
+Instead of the manual steps above, use the launcher for your OS — it handles the
+relay, config, join code, pre-game options and ZeroTier for you:
+
+| OS | Launcher | How to start |
+|---|---|---|
+| **Windows** | `server/launcher-gui.ps1` | double-click `server/start-launcher.bat` (WinForms GUI) |
+| **macOS** | `server/launcher-macos.command` | double-click it in Finder (Terminal menu) |
+
+Both do the same things (Host / Join / Pre-Game Options / ZeroTier); only the UI
+differs — a graphical window on Windows, a Terminal menu on macOS.
 
 ---
 

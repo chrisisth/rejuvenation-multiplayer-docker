@@ -1,6 +1,6 @@
 # Pokémon Rejuvenation — Co-op / Multiplayer Mod
 
-A fan-made mod that brings **multiplayer** to [Pokémon Rejuvenation](https://www.rebornevolved.org/)
+A fan-made mod that brings **multiplayer** to [Pokémon Rejuvenation](https://www.rebornevo.com/rejuvenation/)
 **V14**: walk through the same world together and see each other move in real time —
 plus co-op sync battles, PvP and trading.
 

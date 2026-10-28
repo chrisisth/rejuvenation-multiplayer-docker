@@ -2,6 +2,7 @@
 server/token.txt
 server/launcher_settings.json
 **/coop_config.txt
+docker-relay/.env
 
 # --- Laufzeit-Logs (entstehen im Spielordner) ---
 coop_error.txt

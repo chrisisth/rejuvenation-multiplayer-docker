@@ -1,0 +1,1 @@
+docker compose -f docker-relay/compose.yaml up -d --build

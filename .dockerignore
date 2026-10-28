@@ -1,0 +1,9 @@
+.git
+**/.env
+**/token.txt
+**/coop_config.txt
+**/launcher_settings.json
+**/node_modules
+game/
+*.rxdata
+*.rgss*

@@ -1,146 +1,28 @@
-# Pokémon Rejuvenation — Co-op / Multiplayer Mod
+## Quick start
 
-A fan-made mod that brings **multiplayer** to [Pokémon Rejuvenation](https://www.rebornevo.com/rejuvenation/)
-**V14**: walk through the same world together and see each other move in real time —
-plus co-op sync battles, PvP and trading.
+### Start the relay (Linux)
 
-> ⚠️ **This repo does NOT contain the game.** It is only a modification.
-> Every player needs their own legal copy of Pokémon Rejuvenation V14 (Windows).
-> "Pokémon" is a trademark of Nintendo / Game Freak / The Pokémon Company. This
-> project is not affiliated with or endorsed by them or by the Rejuvenation team.
+1. Put this repo on your server and open a terminal in its folder.
+2. In `docker-relay/compose.yaml`, replace `INSERT_YOUR_TOKEN_HERE` with a
+   private token. Share it only with your players.
+3. Start the relay:
 
----
-
-## Features
-
-| Area | Status |
-|---|---|
-| See other players on the same map + smooth movement | ✅ |
-| Name tags above other players | ✅ |
-| Co-op sync battles (boss wild + trainer, lockstep, deterministic) | ✅ |
-| PvP (own perspective, win/loss record) | ✅ |
-| Trading (pick a partner, two-sided confirm, dupe protection) | ✅ |
-| Multiplayer menu in the pause menu (PvP & Trading) | ✅ |
-| Internet play over [ZeroTier](https://www.zerotier.com/) | ✅ |
-| **Pre-game menu** (launcher) — set the rules of your run | ✅ |
-| ↳ Difficulty scaling for co-op battles (Light / Normal / Hard / Very Hard) | ✅ |
-| ↳ Randomizer (wild + trainers, fixed per-seed mapping, seed bound to your save) | ✅ |
-| ↳ Soul Link (catch-order linking, linked faint, permanent death) | ✅ |
-
-**Deliberately out of scope:** shared story flags, synchronized cutscenes, anti-cheat.
-
-The pre-game options are **host-authoritative**: the host sets them in the launcher and
-the joiner inherits them automatically. The randomizer seed is locked to each save the
-first time it applies, so a run's world never silently changes.
-
----
-
-## Quick start for players (joining)
-
-You want to join a friend's game.
-
-**Windows:**
-
-1. **Get the installer:** download this repo (or the release ZIP).
-2. **Get a join code:** your host sends you a *join code* (one long text string).
-3. **Double-click `installer/install.bat`.**
-   - Pick your Rejuvenation folder (the one with `Game.exe` / `Rejuvenation.exe`).
-   - Paste the join code → **"Install mod + connect"**.
-4. **Install ZeroTier** (button in the installer) and join the network.
-   Your host then has to **authorize** your device once (see below).
-5. **Start the game.** You should see each other on the same map.
-
-**macOS:**
-
-1. Download this repo (or the release ZIP) and get a join code from your host.
-2. **Double-click `installer/install-macos.command`.** (If macOS blocks it:
-   right-click → Open, or run `chmod +x install-macos.command` once.)
-   - Drag your Rejuvenation folder / `.app` into the Terminal window.
-   - Paste the join code.
-   - The script copies the mod, writes the connection, and joins the ZeroTier network.
-3. **Install [ZeroTier for Mac](https://www.zerotier.com/download/)** if you haven't;
-   the host authorizes your device once.
-4. **Start the game.** You should see each other on the same map.
-
-> The mod (`coop.rb`) and relay are cross-platform — only the setup helper differs
-> per OS. The pre-game options (difficulty / randomizer / soul link) are set by the
-> **host** and reach macOS joiners automatically over the network.
-
----
-
-## Quick start for the host (providing the game)
-
-You host the session:
-
-1. Install **Node.js** (LTS).
-2. **Start the relay:**
-   ```bat
-   node server/relay.js
+   ```sh
+   chmod +x start-docker.sh
+   ./start-docker.sh
    ```
-   The relay listens on TCP port `7777`. A token is generated on first start in
-   `server/token.txt` (or set it via `COOP_TOKEN`).
-3. Install **ZeroTier**, create a network (my.zerotier.com) and join it.
-4. **Generate a join code:**
-   ```bat
-   powershell -ExecutionPolicy Bypass -File installer\make-joincode.ps1
-   ```
-   The code bundles ZeroTier network ID + your ZeroTier IP:port + token. Send it
-   to your players.
-5. **Authorize players:** my.zerotier.com → your network → *Members* → tick "Auth"
-   for each new device.
-6. **Firewall:** allow inbound TCP `7777` (see `docs/internet-setup.md`).
 
-### Launchers (host + join + pre-game options, per OS)
+Give them your server's
+address as `host:port` default is `host:7777` and the token you chose.
 
-Instead of the manual steps above, use the launcher for your OS — it handles the
-relay, config, join code, pre-game options and ZeroTier for you:
+### Join (Windows)
 
-| OS | Launcher | How to start |
-|---|---|---|
-| **Windows** | `server/launcher-gui.ps1` | double-click `server/start-launcher.bat` (WinForms GUI) |
-| **macOS** | `server/launcher-macos.command` | double-click it in Finder (Terminal menu) |
+1. Download this repo and run `client-installer/install.bat`.
+2. Choose your Rejuvenation folder, then enter the server address and shared
+   token.
+3. Click **Install mod and connect**, then launch the game.
 
-Both do the same things (Host / Join / Pre-Game Options / ZeroTier); only the UI
-differs — a graphical window on Windows, a Terminal menu on macOS.
+That's it! The installer adds the mod files and connection config to your game
+folder. If you need a hand, check `coop_net.txt` and `coop_error.txt` there.
 
----
-
-## Requirements
-
-- Windows 10/11
-- Pokémon Rejuvenation **V14** (Windows version, mkxp-z)
-- [ZeroTier](https://www.zerotier.com/download/) (free) — for internet play
-- Host only: [Node.js](https://nodejs.org/) LTS (for the relay)
-
----
-
-## How it works (short)
-
-- The mod (`mod/coop.rb`, `mod/coop_menu.rb`) loads through Rejuvenation's official
-  mod system into `patch/Mods/` — **no** patching of `Scripts.rxdata`.
-- A small **TCP relay** (`server/relay.js`) forwards line-delimited JSON between
-  clients (positions, battle commands, trades, PvP). No state, no history.
-- **ZeroTier** creates a private, encrypted overlay network over the internet;
-  clients connect to the host's ZeroTier IP. The relay is protected by a token.
-
-More detail: [`docs/status.md`](docs/status.md), [`docs/internet-setup.md`](docs/internet-setup.md).
-
----
-
-## Troubleshooting
-
-The mod writes logs into the game folder:
-
-- `coop_error.txt` — load errors / exceptions (most important file when something breaks)
-- `coop_net.txt` — connection status to the relay
-- `coop_battle.txt` — battle sync
-
-Common causes: wrong/missing join code (`coop_config.txt`), relay not running,
-ZeroTier device not authorized, firewall blocking TCP 7777.
-
----
-
-## License
-
-MIT — see [`LICENSE`](LICENSE). Applies only to this repo's code, **not** to
-Pokémon Rejuvenation or any Pokémon content.
+Thx to https://github.com/sukjacode/rejuvenation-multiplayer
